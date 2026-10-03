@@ -289,6 +289,43 @@ pub fn pick_model_thompson<R: Rng + ?Sized>(
     best
 }
 
+/// What a request classifier returns for one query.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Classification {
+    pub request_type: RequestType,
+    /// 1 (trivial) to 5 (very hard).
+    pub complexity: u8,
+    /// 0.0 (unsure) to 1.0 (certain).
+    pub confidence: f32,
+}
+
+use async_trait::async_trait;
+
+/// Error type for classifiers. Any failure makes the router fall back to regex.
+pub type ClassifierError = Box<dyn std::error::Error + Send + Sync>;
+
+/// Anything that can classify a query.
+#[async_trait]
+pub trait RequestClassifier: Send + Sync {
+    async fn classify(&self, query: &str) -> Result<Classification, ClassifierError>;
+}
+
+/// The existing regex classifier, wrapped in the trait.
+/// It has no real sense of complexity or certainty, so it reports fixed values:
+/// complexity 3 (middle) and confidence 0.5 (neutral).
+pub struct RegexClassifier;
+
+#[async_trait]
+impl RequestClassifier for RegexClassifier {
+    async fn classify(&self, query: &str) -> Result<Classification, ClassifierError> {
+        Ok(Classification {
+            request_type: classify_request_type(query),
+            complexity: 3,
+            confidence: 0.5,
+        })
+    }
+}
+
 // --------------------------------------------------------------------------
 // 4. Public entry point
 // --------------------------------------------------------------------------
@@ -532,3 +569,15 @@ mod tests {
         assert!(matches!(tier, Tier::Tier1 | Tier::Tier2 | Tier::Tier3));
     }
 }
+
+
+    // --- request classifier trait ---
+
+    #[tokio::test]
+    async fn regex_classifier_wraps_existing_behavior() {
+        let query = "write a python function that sorts a list";
+        let result = RegexClassifier.classify(query).await.unwrap();
+        assert_eq!(result.request_type, classify_request_type(query));
+        assert_eq!(result.complexity, 3);
+        assert_eq!(result.confidence, 0.5);
+    }
